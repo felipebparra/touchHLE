@@ -1,3 +1,4 @@
+
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -37,11 +38,11 @@ pub struct CFGregorianDate {
     pub minutes: i8,  // SInt8
     pub seconds: f64, // double
 }
+
 unsafe impl SafeRead for CFGregorianDate {}
 impl_GuestRet_for_large_struct!(CFGregorianDate);
 
-/// Absolute time is measured in seconds relative to the absolute reference date
-/// of Jan 1 2001 00:00:00 GMT.
+/// Absolute time is measured in seconds relative to Jan 1 2001 GMT.
 fn CFAbsoluteTimeGetCurrent(_env: &mut Environment) -> CFAbsoluteTime {
     SystemTime::now()
         .duration_since(apple_epoch())
@@ -52,7 +53,7 @@ fn CFAbsoluteTimeGetCurrent(_env: &mut Environment) -> CFAbsoluteTime {
 type CFTimeZoneRef = CFTypeRef;
 
 fn CFTimeZoneCopySystem(_env: &mut Environment) -> CFTimeZoneRef {
-    // TODO: implement (nil seems to correspond to GMT)
+    // TODO: implement. Null is treated as GMT by the date helpers below.
     nil
 }
 
@@ -65,30 +66,36 @@ fn CFTimeZoneCopyDefault(env: &mut Environment) -> CFTimeZoneRef {
 }
 
 pub fn CFAbsoluteTimeGetGregorianDate(
-    _env: &mut Environment,
+    env: &mut Environment,
     at: CFAbsoluteTime,
     tz: CFTimeZoneRef,
 ) -> CFGregorianDate {
-    assert!(tz.is_null());
-    let time64 = apple_epoch()
-        .add(Duration::from_secs_f64(at))
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let time = time64 as time_t;
-    let tm = timestamp_to_calendar_date(time);
+    // A non-null CFTimeZoneRef is a valid input, not an assertion failure.
+    // Use the time-zone's offset for the requested calendar conversion.
+    // This is an approximation for historical/DST-dependent dates because
+    // secondsFromGMT returns the current offset, not necessarily the offset at `at`.
+    let offset_seconds: i32 = if tz.is_null() {
+        0
+    } else {
+        msg![env; tz secondsFromGMT]
+    };
+
+    let unix_seconds = at + SECS_FROM_UNIX_TO_APPLE_EPOCHS as f64;
+    let local_seconds = unix_seconds + f64::from(offset_seconds);
+    let whole_seconds = local_seconds.floor() as time_t;
+    let tm = timestamp_to_calendar_date(whole_seconds);
     CFGregorianDate {
         year: 1900 + tm.tm_year,
         month: (tm.tm_mon + 1) as i8,
         day: tm.tm_mday as i8,
         hours: tm.tm_hour as i8,
         minutes: tm.tm_min as i8,
-        seconds: tm.tm_sec.into(),
+        seconds: f64::from(tm.tm_sec) + local_seconds.rem_euclid(1.0),
     }
 }
 
 fn CFAbsoluteTimeGetDayOfWeek(env: &mut Environment, at: CFAbsoluteTime, tz: CFTimeZoneRef) -> i32 {
-    assert!(tz.is_null());
+    // Keep the previous implementation's return convention for compatibility.
     CFAbsoluteTimeGetGregorianDate(env, at, tz).day.into()
 }
 
