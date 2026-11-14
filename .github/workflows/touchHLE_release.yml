@@ -1,3 +1,4 @@
+
 name: Build touchHLE Android
 
 on:
@@ -20,8 +21,6 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git fetch origin "$GITHUB_REF"
           git checkout "$GITHUB_SHA"
-
-
 
       - name: Get Submodules
         run: git submodule update --init
@@ -90,7 +89,7 @@ jobs:
 
       - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
         name: Extract Android NDK
-        run: 7z -oandroid-ndk -snld x android-ndk-r25c-linux.zip
+        run: mkdir -p android-ndk && unzip -q android-ndk-r25c-linux.zip -d android-ndk
 
       - name: Link Android NDK
         run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'
