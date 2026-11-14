@@ -10,7 +10,8 @@ use crate::frameworks::core_foundation::CFTypeRef;
 use crate::frameworks::foundation::NSTimeInterval;
 use crate::libc::time::{time_t, timestamp_to_calendar_date};
 use crate::mem::SafeRead;
-use crate::objc::nil;
+use crate::objc::{id, nil, retain};
+use crate::msg;
 use crate::{impl_GuestRet_for_large_struct, Environment};
 use std::ops::Add;
 use std::time::{Duration, SystemTime};
@@ -55,6 +56,14 @@ fn CFTimeZoneCopySystem(_env: &mut Environment) -> CFTimeZoneRef {
     nil
 }
 
+// Core Foundation and Foundation time-zone objects are toll-free bridged.
+// The Copy rule requires the caller to receive an owned reference.
+fn CFTimeZoneCopyDefault(env: &mut Environment) -> CFTimeZoneRef {
+    let cls = env.objc.get_known_class("NSTimeZone", &mut env.mem);
+    let tz: id = msg![env; cls defaultTimeZone];
+    retain(env, tz)
+}
+
 pub fn CFAbsoluteTimeGetGregorianDate(
     _env: &mut Environment,
     at: CFAbsoluteTime,
@@ -86,6 +95,7 @@ fn CFAbsoluteTimeGetDayOfWeek(env: &mut Environment, at: CFAbsoluteTime, tz: CFT
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFAbsoluteTimeGetCurrent()),
     export_c_func!(CFTimeZoneCopySystem()),
+    export_c_func!(CFTimeZoneCopyDefault()),
     export_c_func!(CFAbsoluteTimeGetGregorianDate(_, _)),
     export_c_func!(CFAbsoluteTimeGetDayOfWeek(_, _)),
 ];
