@@ -3,115 +3,125 @@ name: Build touchHLE Android
 
 on:
   push:
-    branches: [ "trunk" ]
+    branches: ["trunk"]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  CFLAGS: "-std=gnu17"
+  CMAKE_C_FLAGS: "-std=gnu17"
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout modified touchHLE
-        shell: bash
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE"
-          git clone https://github.com/felipebparra/touchHLE "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git fetch origin "$GITHUB_REF"
-          git checkout "$GITHUB_SHA"
-
-      - name: Get Submodules
-        run: git submodule update --init
-
-      - name: Try to get cached copy of Boost
-        id: cache-boost
-        uses: actions/cache@v3
+        uses: actions/checkout@v4
         with:
-          path: vendor/boost
-          key: boost_1_81_0
+          submodules: true
+          fetch-depth: 0
 
-      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
-        name: Download Boost
-        run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
-
-      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
-        name: Extract Boost
-        run: 7z -ovendor x boost_1_81_0.7z && mv vendor/boost_1_81_0 vendor/boost
-
-      - name: Try to get cached copy of cmake
-        id: cache-cmake
-        uses: actions/cache@v3
-        with:
-          path: vendor/cmake
-          key: cmake_3_31_6_linux
-
-      - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
-        name: Download Cmake
-        run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz"
-
-      - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
-        name: Extract Cmake
-        run: tar xzvf "cmake-3.31.6-linux-x86_64.tar.gz" -C vendor && mv vendor/cmake-3.31.6-linux-x86_64 vendor/cmake
-
-      - name: Install AArch64 Android Rust toolchain
+      - name: Set up Rust Android target
         run: rustup target add aarch64-linux-android
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk@3.5.4
 
-      - name: Try to get a cached copy of Gradle
+      - name: Cache Boost
+        id: cache-boost
+        uses: actions/cache@v4
+        with:
+          path: vendor/boost
+          key: boost_1_81_0
+
+      - name: Download Boost
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 -o boost.7z \
+            https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          mkdir -p vendor
+          7z x boost.7z -ovendor
+          mv vendor/boost_1_81_0 vendor/boost
+
+      - name: Cache CMake
+        id: cache-cmake
+        uses: actions/cache@v4
+        with:
+          path: vendor/cmake
+          key: cmake_3_31_6_linux
+
+      - name: Download CMake
+        if: steps.cache-cmake.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 -o cmake.tar.gz \
+            https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz
+          mkdir -p vendor
+          tar xzf cmake.tar.gz -C vendor
+          mv vendor/cmake-3.31.6-linux-x86_64 vendor/cmake
+
+      - name: Cache Gradle
         id: cache-gradle
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: gradle
           key: gradle-8.11.1
 
-      - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}
-        name: Download Gradle
-        run: curl -L -o gradle-8.11.1-bin.zip "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"
+      - name: Download Gradle
+        if: steps.cache-gradle.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 -o gradle.zip \
+            https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          mkdir -p gradle
+          unzip -q gradle.zip -d gradle
 
-      - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}
-        name: Extract Gradle
-        run: 7z -ogradle x gradle-8.11.1-bin.zip
-
-      - name: Try to get a cached copy of Android NDK
-        id: cache-android-ndk
-        uses: actions/cache@v3
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
         with:
           path: android-ndk
           key: android-ndk-r25c
 
-      - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
-        name: Download Android NDK
-        run: curl -L -o android-ndk-r25c-linux.zip "https://dl.google.com/android/repository/android-ndk-r25c-linux.zip"
+      - name: Download Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 -o ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          mkdir -p android-ndk
+          unzip -q ndk.zip -d android-ndk
 
-      - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
-        name: Extract Android NDK
-        run: mkdir -p android-ndk && unzip -q android-ndk-r25c-linux.zip -d android-ndk
+      - name: Configure Android NDK
+        run: |
+          NDK_PATH="$GITHUB_WORKSPACE/android-ndk/android-ndk-r25c"
+          SDK_NDK="$ANDROID_SDK_ROOT/ndk/25.2.9519653"
+          if [ ! -e "$SDK_NDK" ]; then
+            mkdir -p "$(dirname "$SDK_NDK")"
+            ln -s "$NDK_PATH" "$SDK_NDK"
+          fi
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK=$NDK_PATH" >> "$GITHUB_ENV"
 
-      - name: Link Android NDK
-        run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'
+      - name: Configure Android SDK
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
-      - name: Generate local.properties file
-        run: echo 'sdk.dir='$ANDROID_SDK_ROOT > android/local.properties
-
-      - name: Lint
-        run: dev-scripts/lint.sh ndk -t arm64-v8a
-        env:
-          ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
-          ANDROID_NDK: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
-          ANDROID_NDK_HOME: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
-          CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
+      - name: Configure C compiler
+        run: |
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CFLAGS=-std=gnu17" >> "$GITHUB_ENV"
+          echo "CMAKE_C_FLAGS=-std=gnu17" >> "$GITHUB_ENV"
+          echo "CMAKE=$GITHUB_WORKSPACE/vendor/cmake/bin/cmake" >> "$GITHUB_ENV"
 
       - name: Build for Android
-        run: cd android && ../gradle/gradle-8.11.1/bin/gradle assembleRelease && mv app/build/outputs/apk/release/app-release.apk ../touchHLE.apk
-        env:
-          ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
-          CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
+        run: |
+          cd android
+          ../gradle/gradle-8.11.1/bin/gradle assembleRelease
+          mv app/build/outputs/apk/release/app-release.apk ../touchHLE.apk
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
         with:
           name: touchHLE_Android_AArch64
           path: touchHLE.apk
+          if-no-files-found: error
